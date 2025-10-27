@@ -166,34 +166,7 @@ En la cabecera de `main.c`:
 
 ---
 
-## 8) Pruebas rápidas (diagnóstico)
-
-* **LCD**: si no muestra nada, prueba **`LCD_ADDR` 0x27/0x3F**, revisa SDA/SCL, **pull-ups a 3.3 V**, y que esté alimentado (GND común).
-* **Servo**: al iniciar debería “centrarse” (~90°). Si vibra o reinicia la placa, usa **fuente de 5 V dedicada** y **GND común**.
-* **Keypad**: si las teclas no corresponden, es probable que filas/columnas estén permutadas; ajusta los arrays de pines o reubica cables.
-* **Buzzer**: en PA5; recuerda que **LD2** (LED verde onboard) parpadea en el mismo pin.
-
----
-
-## 9) Errores comunes y solución
-
-* **`fatal error: stm32l0xx_hal_tim.h: No such file or directory`**
-  → Faltan archivos HAL TIM o include path. Re-genera con CubeMX o añade:
-
-  * `Drivers/STM32L0xx_HAL_Driver/Inc/stm32l0xx_hal_tim.h`
-  * `Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_tim.c`
-    y las rutas de include.
-
-* **`unknown type name 'I2C_HandleTypeDef'` / `TIM_* undeclared`**
-  → Habilita en `stm32l0xx_hal_conf.h`:
-  `#define HAL_I2C_MODULE_ENABLED` y `#define HAL_TIM_MODULE_ENABLED`.
-
-* **ST-LINK no se conecta / LD1 titila**
-  → Problema de **alimentación** (servo chupando corriente). Usa fuente 5 V separada, **GND común**, cable USB de **datos**, actualiza firmware del ST-LINK (STM32CubeProgrammer).
-
----
-
-## 10) Personalización rápida
+## 8) Personalización rápida
 
 * **Tiempos de fases**: `PHASE1_MS`, `PHASE2_MS`, `PHASE3_MS`.
 * **Movimiento del servo**: `MIX_SWEEP_DEG`, `MIX_SPEED_MS`.
@@ -201,7 +174,7 @@ En la cabecera de `main.c`:
 
 ---
 
-## 11) Seguridad y buenas prácticas
+## 9) Seguridad y buenas prácticas
 
 * **Nunca** alimente el pin **5V** de la Nucleo con **>5 V**. Si usas batería de **7 V**, entra por **VIN** o usa un **regulador a 5 V**.
 * **GND común** siempre entre placa, servo y periféricos.
