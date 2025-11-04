@@ -1,181 +1,148 @@
-# README — Simulador de Cafetera (STM32 NUCLEO-L053R8)
+# Proyecto “Cafetera” — STM32L053R8 (Nucleo)
 
-Este proyecto implementa un **simulador de cafetera** usando una Nucleo-L053R8, un **LCD I²C**, **keypad 4×4**, **servo** (para simular mezcla), **buzzer** y **3 LEDs** de estado (rojo/amarillo/azul). El flujo es: **selección de bebida → confirmación → 3 fases** con temporizaciones, servo moviéndose en la fase 2 y buzzer al finalizar.
+Este proyecto implementa el firmware para una cafetera didáctica basada en un microcontrolador **STM32L053R8** (Nucleo). Utiliza un **keypad 4×4**, una pantalla **LCD 16×2 con interfaz I2C (PCF8574)**, un **motor paso a paso 28BYJ-48 con driver ULN2003**, tres **LEDs de estado** y un **buzzer**.  
 
----
-
-## 1) Hardware y conexiones
-
-**Placa:** NUCLEO-L053R8
-**Tensión lógica:** 3.3 V (cuidado con periféricos a 5 V)
-
-### Pines usados
-
-| Función             | Pin Nucleo                      | Nota                                                  |
-| ------------------- | ------------------------------- | ----------------------------------------------------- |
-| **Buzzer**          | D13 → PA5                       | Comparte pin con **LD2** onboard (parpadea al sonar). |
-| **LED rojo**        | D12 → PA6                       | LED fase 1.                                           |
-| **LED amarillo**    | A2 → PA4                        | LED fase 2.                                           |
-| **LED azul**        | A1 → PA1                        | LED fase 3.                                           |
-| **Servo (PWM)**     | D11 → PA7                       | **TIM22_CH1**, 50 Hz.                                 |
-| **LCD I²C SDA**     | D14 → PB9                       | PCF8574 (backpack) típico 0x27 u 0x3F.                |
-| **LCD I²C SCL**     | D15 → PB8                       | I²C1 AF4 open-drain + pull-up.                        |
-| **Keypad filas**    | D9 PC7, D8 PA9, D7 PA8, D6 PB10 | Entradas con **pull-up**.                             |
-| **Keypad columnas** | D5 PB4, D4 PB5, D3 PB3, D2 PA10 | Salidas.                                              |
-
-**Alimentación recomendada:**
-
-* **Placa**: por USB (U5V) o VIN si usas batería/regulador externo.
-* **Servo**: **5 V dedicado** (≥1 A) con **GND común** a la Nucleo.
-* **LCD I²C**: alimenta a **3.3 V** si su backpack lo permite (mejor para no subir SDA/SCL a 5 V). Si solo trabaja a 5 V, usa **level shifter** o pull-ups a 3.3 V.
+Todo el funcionamiento está basado en interrupciones: no se emplean retardos de bloqueo (`delay`) ni bucles de espera activa.
 
 ---
 
-## 2) Software (entorno)
+## 🎛️ Características principales
 
-* **STM32CubeIDE** (o STM32CubeMX + tu toolchain GCC ARM).
-* **HAL STM32L0**.
+- Interfaz de usuario mediante LCD desplazable.
+- Menú de selección con soporte para:
+  - `A`: acceder al menú de bebidas.
+  - `1–4`: seleccionar bebida.
+  - `B`: seleccionar tamaño.
+  - `C`: confirmar selección.
+  - `D`: borrar selección (doble `D` reinicia).
+  - `*`: iniciar proceso.
+  - `#`: pausar/reanudar.
+- Proceso dividido en 3 fases:
+  1. **Iniciando** — LED rojo, sin motor.
+  2. **Preparando** — LED amarillo, motor a velocidad media.
+  3. **Sirviendo** — LED azul, motor rápido.
+- Tiempo total según bebida seleccionada:
+  | Bebida      | Tiempo total |
+  |-------------|--------------|
+  | Capuchino   | 60 s         |
+  | Expresso    | 30 s         |
+  | Late        | 80 s         |
+  | Americano   | 45 s         |
+- Al terminar: mensaje **“Disfrútalo”** en la LCD y sonido de **2 beeps** en el buzzer.
 
-### Habilitar módulos HAL
+---
 
-En `Core/Inc/stm32l0xx_hal_conf.h` asegúrate de tener:
+## 🛠️ Hardware necesario
+
+### Placa de desarrollo
+- **Nucleo-L053R8** (STM32L053R8T6 @ 16 MHz HSI).
+
+### Conexiones destacadas
+
+#### LCD I2C (con módulo PCF8574)
+| Pin Nucleo | Señal | Descripción |
+|------------|--------|-------------|
+| PB6        | SCL    | I2C1 Clock  |
+| PB7        | SDA    | I2C1 Data   |
+| 3.3V       | VCC    | Alimentación del módulo |
+| GND        | GND    | Tierra común |
+
+> ⚠️ Nota: Si el módulo trae resistencias pull-up a 5V, debe alimentarse a 3.3V para no dañar los pines.
+
+#### Motor 28BYJ-48 + ULN2003
+| Pin Nucleo | Señal | ULN2003 |
+|------------|-------|---------|
+| PA4        | IN1   | Step 1  |
+| PA5        | IN2   | Step 2  |
+| PA6        | IN3   | Step 3  |
+| PA7        | IN4   | Step 4  |
+
+Alimentación del ULN2003: +5V con GND común.
+
+#### Keypad 4×4 (por defecto `KP_INVERT=0`)
+| Línea | Puerto | Pines |
+|-------|--------|-------|
+| Filas (R0–R3) | GPIOB | PB0, PB1, PB2, PB3 |
+| Columnas (C0–C3) | GPIOB | PB4, PB5, PB8, PB9 |
+
+> Si el teclado viene invertido (C primero, luego R), definir `#define KP_INVERT 1` en el código.
+
+#### LEDs y buzzer
+| Módulo    | Pin Nucleo |
+|-----------|------------|
+| LED rojo  | PC0        |
+| LED amarillo | PC1     |
+| LED azul  | PC2        |
+| Buzzer (PWM) | PA1 - TIM21 CH2 |
+
+---
+
+## ⚙️ Interrupciones configuradas
+
+| IRQ      | Frecuencia | Función principal |
+|----------|------------|------------------|
+| **SysTick** | 1 ms | Control de temporizadores, scroll, FSM general, motor, buzzer |
+| **TIM22**   | 5 ms | Escaneo del keypad con antirrebote |
+
+> El bucle principal usa `__WFI()` para que el micro entre en reposo y sea despertado por interrupciones.
+
+---
+
+## 🧩 Configuración en STM32CubeIDE
+
+1. Instalar el paquete **STM32Cube FW_L0**  
+   (Help → Manage embedded software packages → STM32L0)
+
+2. Añadir rutas de inclusión en:  
+   `Project → Properties → C/C++ Build → MCU GCC Compiler → Include paths`
+
+   ```plaintext
+   .../Drivers/CMSIS/Include  
+   .../Drivers/CMSIS/Device/ST/STM32L0xx/Include
+````
+
+3. Definir `STM32L053xx` en:
+   `Project → Properties → C/C++ Build → MCU GCC Compiler → Preprocessor`
+
+4. No definir manualmente `SysTick_Handler` en `main.c`.
+
+---
+
+## 🔧 Parámetros personalizables
+
+Ubicados al inicio de `main.c`:
 
 ```c
-#define HAL_I2C_MODULE_ENABLED
-#define HAL_TIM_MODULE_ENABLED
-```
-
-Y que tu proyecto incluya los sources de HAL:
-
-```
-Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_i2c.c
-Drivers/STM32L0xx_HAL_Driver/Src/stm32l0xx_hal_tim.c
-// (opcionales) _i2c_ex.c y _tim_ex.c
+#define KP_INVERT            0        // 1 si las líneas del keypad están invertidas
+#define LCD_I2C_ADDR_7B      0x27     // Dirección I2C de la pantalla
+#define SCROLL_PERIOD_MS     600      // Velocidad del scroll
+#define T_CAPUCHINO_MS       60000
+#define T_EXPRESSO_MS        30000
+#define T_LATE_MS            80000
+#define T_AMERICANO_MS       45000
 ```
 
 ---
 
-## 3) Estructura del código
+## ▶️ Flujo de uso
 
-Todo vive en `main.c`. Los bloques principales:
-
-* **Init de HAL y reloj** (`SystemClock_Config`)
-* **Init GPIO**, **I2C1 (PB9/PB8)** y **TIM22 PWM (PA7)**
-* **Driver LCD (HD44780 vía PCF8574)** en modo 4-bit por I²C
-* **Escaneo Keypad 4×4** (salidas por columnas, entradas con pull-up en filas)
-* **Servo** (50 Hz) con helpers para fijar ángulo y “sweep” de mezcla
-* **Buzzer/LEDs** helpers
-* **Lógica de cafetera**: menú → confirmación → fases
-
----
-
-## 4) Flujo de ejecución (paso a paso)
-
-1. **Arranque**
-
-   * `HAL_Init()` + `SystemClock_Config()`.
-   * `MX_GPIO_Init()`, `MX_I2C1_Init()`, `MX_TIM22_Init()`.
-   * `lcd_init()`, `servo_init_50Hz()`, `leds_off()`.
-   * Muestra **“Cafetera Ready”**.
-
-2. **Menú principal**
-
-   * LCD muestra: `1 Capuc 2 Latte` en la 1ª línea y `3 Macch 4 Amer` en la 2ª.
-   * El sistema espera una tecla **1..4** del keypad.
-
-3. **Confirmación**
-
-   * Se muestra el nombre de la bebida y `#=OK *=Cancel`.
-   * Si se presiona `#` en ≤15 s → **confirmado**. Si `*` o timeout → **cancelado** y vuelve al menú.
-
-4. **Fases de preparación**
-
-   * **Fase 1** (LED **rojo** ON) — “precarga/molido”. Duración `PHASE1_MS`.
-   * **Fase 2** (LED **amarillo** ON) — “extracción + mezcla”.
-
-     * El **servo** hace un **barrido suave** alrededor de 90° con amplitud `MIX_SWEEP_DEG` y paso cada `MIX_SPEED_MS`, durante `PHASE2_MS`.
-   * **Fase 3** (LED **azul** ON) — “finalización”. Duración `PHASE3_MS`.
-   * Al terminar: LCD **“Listo!”** + **3 beeps** de buzzer.
-
-5. **Regreso al menú** para nueva selección.
+1. Al encender, aparece “Selecciona una opción”.
+2. Presionar `A` para acceder al menú.
+3. Presionar `1–4` para seleccionar la bebida y `C` para confirmar.
+4. (Opcional) Presionar `B` para seleccionar el tamaño P, M o G, y `C` para guardar.
+5. Presionar `*` para iniciar el proceso.
+6. Presionar `#` para pausar/reanudar.
+7. Presionar `D` para borrar selección actual o `D` dos veces para reiniciar.
+8. Al terminar, se muestra "Disfrútalo" y suena el buzzer.
 
 ---
 
-## 5) Parámetros configurables
+## 🪛 Solución de problemas
 
-En la cabecera de `main.c`:
-
-```c
-#define PHASE1_MS     6000   // ms de Fase 1
-#define PHASE2_MS    10000   // ms de Fase 2
-#define PHASE3_MS     4000   // ms de Fase 3
-#define MIX_SWEEP_DEG   50   // amplitud de mezcla del servo
-#define MIX_SPEED_MS    20   // delay entre pasos del servo
-#define LCD_ADDR   (0x27<<1) // cambia a (0x3F<<1) si tu backpack es 0x3F
-```
-
-> Si el LCD no muestra nada: cambia `LCD_ADDR` a `0x3F<<1`.
+| Problema                    | Posible causa                             |
+| --------------------------- | ----------------------------------------- |
+| LCD enciende pero sin texto | Dirección I2C errónea, error en SDA/SCL   |
+| Keypad no detecta teclas    | Configuración invertida (`KP_INVERT`)     |
+| Motor no gira               | Fallo en conexiones PA4–PA7 o falta de 5V |
 
 ---
-
-## 6) Detalles de implementación
-
-### 6.1 LCD I²C (PCF8574)
-
-* Modo **4-bit**: se envían **nibbles** altos y bajos con **EN** y **RS** controlados por el expander.
-* Funciones clave:
-
-  * `lcd_init()`, `lcd_clear()`, `lcd_set_cursor(row,col)`, `lcd_print(str)`.
-
-### 6.2 Keypad 4×4
-
-* **Columnas** (D5 PB4, D4 PB5, D3 PB3, D2 PA10) como **salidas**:
-
-  * Técnica de **escaneo**: se pone **1 columna a LOW** y se leen las **filas**.
-* **Filas** (D9 PC7, D8 PA9, D7 PA8, D6 PB10) como **entradas con pull-up**:
-
-  * Tecla presionada se lee como **LOW**.
-* `keypad_getkey()` devuelve el **char** mapeado (`'0'..'9','A'..'D','*','#'`) o `0` si no hay tecla.
-
-### 6.3 Servo (TIM22 → PA7)
-
-* PWM a **50 Hz** (periodo 20 ms).
-* **Pulso**: 1.0 ms ≈ 0°, 1.5 ms ≈ 90°, 2.0 ms ≈ 180°.
-* `servo_set_deg(deg)` calcula el **duty** en microsegundos (si el timer corre ~1 MHz, 1 tick ≈ 1 µs).
-* `servo_mix_sweep(center, amplitude, ms)` mueve de ida y vuelta para simular mezcla.
-
-### 6.4 Buzzer y LEDs
-
-* GPIO **salida**.
-* `buzzer_beep(ms)` pone PA5 HIGH por `ms` y luego LOW.
-* LEDs con helpers para encender/apagar por fase.
-
----
-
-## 7) Cómo compilar y ejecutar
-
-1. **Crear proyecto** en STM32CubeIDE para **STM32L053R8**.
-2. **Configurar periféricos** (o usar los `MX_*_Init()` ya provistos):
-
-   * I²C1 en **PB9/PB8** (SDA/SCL, AF4, OD + pull-up).
-   * TIM22 CH1 en **PA7** (PWM).
-   * GPIO para LEDs/buzzer y keypad como en la tabla.
-3. Asegúrate en `stm32l0xx_hal_conf.h` de tener **I2C** y **TIM** habilitados.
-4. **Build** y flashea por **ST-LINK** (USB).
-5. Al iniciar debe aparecer **“Cafetera Ready”** en el LCD.
-
----
-
-## 8) Personalización rápida
-
-* **Tiempos de fases**: `PHASE1_MS`, `PHASE2_MS`, `PHASE3_MS`.
-* **Movimiento del servo**: `MIX_SWEEP_DEG`, `MIX_SPEED_MS`.
-* **Nombres del menú**: edita `bebida_name()` o el menú donde se imprimen las opciones.
-
----
-
-## 9) Seguridad y buenas prácticas
-
-* **Nunca** alimente el pin **5V** de la Nucleo con **>5 V**. Si usas batería de **7 V**, entra por **VIN** o usa un **regulador a 5 V**.
-* **GND común** siempre entre placa, servo y periféricos.
-* Si el LCD I²C se alimenta a **5 V**, asegúrate de que **SDA/SCL** no suban a 5 V (usa **shifter** o pull-ups a 3.3 V).
